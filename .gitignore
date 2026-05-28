@@ -1,0 +1,7 @@
+dist/
+build/
+__pycache__/
+*.pyc
+debug.log
+upx.exe
+test.py
