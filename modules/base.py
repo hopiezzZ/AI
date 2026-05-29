@@ -37,7 +37,7 @@ def apply_excel_style(workbook):
                     cell.alignment = Alignment(horizontal='left', vertical='center')
         
         # 3. 针对 PDT产品线 合并二级分类列（第一列）+ 订单目标(21) + 完成率(22)
-        if sheet_name == 'PDT产品线' and ws.max_row > 1:
+        if sheet_name in ('PDT产品线', '毛利_PDT产品线') and ws.max_row > 1:
             col_idx = 1
             start_row = 2
             current_val = ws.cell(row=start_row, column=col_idx).value
@@ -59,7 +59,7 @@ def apply_excel_style(workbook):
                     current_val = val
 
         # 3.5. PDT 服务产品经理业绩总计行合并它和右边单元格
-        if sheet_name == 'PDT产品线' and ws.max_row > 1:
+        if sheet_name in ('PDT产品线', '毛利_PDT产品线') and ws.max_row > 1:
             for row in range(2, ws.max_row + 1):
                 if ws.cell(row=row, column=1).value == '服务产品经理业绩总计':
                     ws.merge_cells(start_row=row, start_column=1,
@@ -67,8 +67,8 @@ def apply_excel_style(workbook):
                     ws.cell(row=row, column=1).alignment = Alignment(horizontal='center', vertical='center')
                     break
 
-        # 4. 针对 行业计算表 / 行业报表 合并事业部列（第一列）
-        if sheet_name in ('行业计算表', '行业报表') and ws.max_row > 1:
+        # 4. 针对 行业计算表 / 行业报表 / 毛利表 合并事业部列（第一列）
+        if sheet_name in ('行业计算表', '行业报表', '毛利_行业计算表', '毛利_行业报表') and ws.max_row > 1:
             col_idx = 1
             start_row = 2
             current_val = ws.cell(row=start_row, column=col_idx).value
@@ -83,8 +83,8 @@ def apply_excel_style(workbook):
                     start_row = row
                     current_val = val
 
-        # 5. 针对 办事处计算表 / 办事处报表 合并区域列（第一列）
-        if sheet_name in ('办事处计算表', '办事处报表') and ws.max_row > 1:
+        # 5. 针对 办事处计算表 / 办事处报表 / 毛利表 合并区域列（第一列）
+        if sheet_name in ('办事处计算表', '办事处报表', '毛利_办事处计算表', '毛利_办事处报表') and ws.max_row > 1:
             col_idx = 1
             start_row = 2
             current_val = ws.cell(row=start_row, column=col_idx).value

@@ -1,15 +1,17 @@
 import pandas as pd
 import math
-from datetime import datetime, timedelta
+import shutil
 import tempfile
 import os
+from datetime import datetime, timedelta
 from PyQt5.QtWidgets import (QVBoxLayout, QLabel, QTableWidget, QTableWidgetItem,
                              QPushButton, QHBoxLayout, QHeaderView, QMessageBox,
                              QProgressDialog, QDateEdit, QFileDialog, QFrame, QDialog,
-                             QLineEdit, QWidget)
+                             QLineEdit, QWidget, QScrollArea)
 from PyQt5.QtCore import Qt, QDate, pyqtSignal
 from PyQt5.QtGui import QDragEnterEvent, QDropEvent
 from modules.base import BaseModule, ReportThread, apply_excel_style
+from modules.process_maoli import process_maoli_order
 
 
 class YearInputDialog(QDialog):
@@ -511,8 +513,7 @@ def process_order(df, week_start=None, week_end=None,
         '党政': ['党政', 'Government'],
         '安平': ['安平', 'Public Sector', '检法司'],
         '分销': ['分销', 'Infrastructure'],
-        '交通综合': ['交通综合', '代理销售-交通-铁路'],
-        '民航及水运': ['民航及水运', 'Carrier'],
+        '交通综合': ['交通综合', '代理销售-交通-铁路', '民航及水运', 'Carrier'],
         '部委及职教': ['教育部及职教', '部委及职教'],
         '教育': ['教育科研', '教育'],
         '科研及北京教育': ['科研及智慧教育', '科研及北京教育'],
@@ -528,7 +529,7 @@ def process_order(df, week_start=None, week_end=None,
         '内部销售': ['内部销售'],
         '分销': ['分销'],
         '金融': ['保险', '银行三部', '银行二部', '银行一部', '证券'],
-        '交通': ['轨道', '交通综合', '民航及水运'],
+        '交通': ['轨道', '交通综合'],
         '教育': ['高教', '部委及职教', '教育', '科研及北京教育'],
         '医疗': ['医保及北京销售部', '医院及公共卫生'],
         '专网': ['军工', '专网'],
@@ -972,8 +973,33 @@ def process_order(df, week_start=None, week_end=None,
 
 # ==================== 订单模块界面 ====================
 class OrderModule(BaseModule):
-    def init_ui(self):
-        layout = QVBoxLayout(self)
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setStyleSheet("""
+            QScrollArea {
+                border: none;
+                background-color: transparent;
+            }
+            QScrollArea > QWidget > QWidget {
+                background-color: transparent;
+            }
+        """)
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setAlignment(Qt.AlignTop)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        
+        content_widget = QWidget()
+        self.init_ui_content(content_widget)
+        
+        scroll.setWidget(content_widget)
+        
+        main_layout = QVBoxLayout(self)
+        main_layout.setContentsMargins(0, 0, 0, 0)
+        main_layout.addWidget(scroll)
+    
+    def init_ui_content(self, content_widget):
+        layout = QVBoxLayout(content_widget)
         layout.setContentsMargins(18, 18, 18, 18)
         layout.setSpacing(14)
 
@@ -981,6 +1007,8 @@ class OrderModule(BaseModule):
         self.current_df_oem = None
         self.current_df_manual = None
         self.year25_data = None
+        self.current_df_maoli = None
+        self.current_df_maoli_manual = None
         self.last_dir = os.path.expanduser("~")
 
         upload_card_style = (
@@ -1052,8 +1080,66 @@ class OrderModule(BaseModule):
         self.upload_btn_4.file_dropped.connect(lambda p: self._on_drop_file(p, 4))
         layout.addWidget(self.upload_btn_4)
 
+        # ---- 毛利表数据源区域 ----
+        section_label_3 = QLabel("📥  毛利表数据源")
+        section_label_3.setStyleSheet("font-size: 15px; font-weight: bold; color: #333333; margin-top: 6px;")
+        layout.addWidget(section_label_3)
+
+        self.upload_btn_5 = DropButton("   📂  请上传订单毛利表（可选）\n       点击选择 Excel 文件")
+        self.upload_btn_5.setMinimumHeight(72)
+        self.upload_btn_5.setCursor(Qt.PointingHandCursor)
+        self.upload_btn_5.setStyleSheet(upload_card_style)
+        self.upload_btn_5.clicked.connect(self.select_maoli_file)
+        self.upload_btn_5.file_dropped.connect(lambda p: self._on_drop_file(p, 5))
+        layout.addWidget(self.upload_btn_5)
+
+        self.upload_btn_6 = DropButton("   📂  请上传订单毛利手工表（可选）\n       点击选择 Excel 文件")
+        self.upload_btn_6.setMinimumHeight(72)
+        self.upload_btn_6.setCursor(Qt.PointingHandCursor)
+        self.upload_btn_6.setStyleSheet(upload_card_style)
+        self.upload_btn_6.clicked.connect(self.select_maoli_manual_file)
+        self.upload_btn_6.file_dropped.connect(lambda p: self._on_drop_file(p, 6))
+        layout.addWidget(self.upload_btn_6)
+
         self.upload_card_style = upload_card_style
         self.upload_card_ok_style = upload_card_ok_style
+
+        # ---- 25年合计数据输入区域 ----
+        year25_card = QFrame()
+        year25_card.setStyleSheet("QFrame { background-color: #ffffff; border: 1px solid #e8e8e8; border-radius: 8px; }")
+        year25_layout = QVBoxLayout(year25_card)
+        year25_layout.setContentsMargins(16, 14, 16, 14)
+        year25_layout.setSpacing(14)
+
+        year25_label = QLabel("📊  25年合计数据（单位：万元）")
+        year25_label.setStyleSheet("font-size: 15px; font-weight: bold; color: #333333;")
+        year25_layout.addWidget(year25_label)
+
+        input_row1 = QHBoxLayout()
+        input_row1.addWidget(QLabel("综合服务："))
+        self.input_zonghe = QLineEdit()
+        self.input_zonghe.setPlaceholderText("请输入综合服务25年合计")
+        self.input_zonghe.setStyleSheet("border: 1px solid #d9d9d9; border-radius: 4px; padding: 8px;")
+        input_row1.addWidget(self.input_zonghe)
+        year25_layout.addLayout(input_row1)
+
+        input_row2 = QHBoxLayout()
+        input_row2.addWidget(QLabel("数据安全："))
+        self.input_shuju = QLineEdit()
+        self.input_shuju.setPlaceholderText("请输入数据安全25年合计")
+        self.input_shuju.setStyleSheet("border: 1px solid #d9d9d9; border-radius: 4px; padding: 8px;")
+        input_row2.addWidget(self.input_shuju)
+        year25_layout.addLayout(input_row2)
+
+        input_row3 = QHBoxLayout()
+        input_row3.addWidget(QLabel("产教融合："))
+        self.input_chanjiao = QLineEdit()
+        self.input_chanjiao.setPlaceholderText("请输入产教融合25年合计")
+        self.input_chanjiao.setStyleSheet("border: 1px solid #d9d9d9; border-radius: 4px; padding: 8px;")
+        input_row3.addWidget(self.input_chanjiao)
+        year25_layout.addLayout(input_row3)
+
+        layout.addWidget(year25_card)
 
         # ---- 数据预览 ----
         section_label_2 = QLabel("📊  数据预览")
@@ -1134,9 +1220,20 @@ class OrderModule(BaseModule):
         )
         self.download_btn.setCursor(Qt.PointingHandCursor)
 
+        self.download_full_btn = QPushButton("  下载完整报表")
+        self.download_full_btn.setEnabled(False)
+        self.download_full_btn.setStyleSheet(
+            "QPushButton { background-color: #1890ff; color: #ffffff; border: none;"
+            "  border-radius: 6px; padding: 10px 28px; font-size: 15px; font-weight: bold; }"
+            "QPushButton:hover { background-color: #40a9ff; }"
+            "QPushButton:disabled { background-color: #d9d9d9; color: #ffffff; border: none; }"
+        )
+        self.download_full_btn.setCursor(Qt.PointingHandCursor)
+
         btn_layout.addWidget(self.generate_btn)
         btn_layout.addWidget(self.clear_btn)
         btn_layout.addWidget(self.download_btn)
+        btn_layout.addWidget(self.download_full_btn)
         btn_layout.addStretch()
         bottom_layout.addLayout(btn_layout)
 
@@ -1146,6 +1243,7 @@ class OrderModule(BaseModule):
         self.generate_btn.clicked.connect(self.start_generate)
         self.clear_btn.clicked.connect(self.clear_all_uploads)
         self.download_btn.clicked.connect(self.save_report)
+        self.download_full_btn.clicked.connect(self.save_report_full)
 
         self.report_thread = None
 
@@ -1157,6 +1255,7 @@ class OrderModule(BaseModule):
             df['换算后金额(CNY)'] = pd.to_numeric(df['文本总金额'], errors='coerce').fillna(0) * rates
         self.preview_data(df.head(100))
         self.download_btn.setEnabled(False)
+        self.download_full_btn.setEnabled(False)
         self.current_report_path = None
 
     def preview_data(self, df):
@@ -1194,6 +1293,10 @@ class OrderModule(BaseModule):
             self.load_oem_file(path)
         elif slot == 4:
             self.load_manual_file(path)
+        elif slot == 5:
+            self.load_maoli_file(path)
+        elif slot == 6:
+            self.load_maoli_manual_file(path)
 
     def load_file(self, file_path):
         try:
@@ -1214,10 +1317,13 @@ class OrderModule(BaseModule):
         self.current_df_oem = None
         self.current_df_manual = None
         self.year25_data = None
+        self.current_df_maoli = None
+        self.current_df_maoli_manual = None
         self.preview_table.clear()
         self.preview_table.setRowCount(0)
         self.preview_table.setColumnCount(0)
         self.download_btn.setEnabled(False)
+        self.download_full_btn.setEnabled(False)
         self.current_report_path = None
         self.upload_btn_1.setText("   📂  请上传服务订单报表（必选）\n       点击选择 Excel 文件")
         self.upload_btn_1.setStyleSheet(self.upload_card_style)
@@ -1227,6 +1333,13 @@ class OrderModule(BaseModule):
         self.upload_btn_3.setStyleSheet(self.upload_card_style)
         self.upload_btn_4.setText("   📂  请导入手工计入表格（可选）\n       点击选择 Excel 文件")
         self.upload_btn_4.setStyleSheet(self.upload_card_style)
+        self.upload_btn_5.setText("   📂  请上传订单毛利表（可选）\n       点击选择 Excel 文件")
+        self.upload_btn_5.setStyleSheet(self.upload_card_style)
+        self.upload_btn_6.setText("   📂  请上传订单毛利手工表（可选）\n       点击选择 Excel 文件")
+        self.upload_btn_6.setStyleSheet(self.upload_card_style)
+        self.input_zonghe.clear()
+        self.input_shuju.clear()
+        self.input_chanjiao.clear()
 
     def select_mgmt_file(self):
         file_path, _ = QFileDialog.getOpenFileName(
@@ -1254,6 +1367,24 @@ class OrderModule(BaseModule):
         if file_path:
             self.last_dir = os.path.dirname(file_path)
             self.load_manual_file(file_path)
+
+    def select_maoli_file(self):
+        file_path, _ = QFileDialog.getOpenFileName(
+            self, "选择订单毛利表", self.last_dir,
+            "Excel文件 (*.xlsx *.xls)", options=QFileDialog.DontUseNativeDialog
+        )
+        if file_path:
+            self.last_dir = os.path.dirname(file_path)
+            self.load_maoli_file(file_path)
+
+    def select_maoli_manual_file(self):
+        file_path, _ = QFileDialog.getOpenFileName(
+            self, "选择订单毛利手工表", self.last_dir,
+            "Excel文件 (*.xlsx *.xls)", options=QFileDialog.DontUseNativeDialog
+        )
+        if file_path:
+            self.last_dir = os.path.dirname(file_path)
+            self.load_maoli_manual_file(file_path)
 
     def _validate_extra_columns(self, df, file_type):
         required = ['年月', '系统部', '营业收入']
@@ -1313,34 +1444,83 @@ class OrderModule(BaseModule):
         except Exception as e:
             QMessageBox.critical(self, "读取失败", str(e))
 
+    def load_maoli_file(self, file_path):
+        try:
+            df = pd.read_excel(file_path, sheet_name=0, engine='openpyxl')
+            self.current_df_maoli = df
+            fname = os.path.basename(file_path)
+            self.upload_btn_5.setText(f"   ✅  订单毛利表已加载：{fname}\n       点击可重新选择")
+            self.upload_btn_5.setStyleSheet(self.upload_card_ok_style)
+            self.download_btn.setEnabled(False)
+            self.current_report_path = None
+        except Exception as e:
+            QMessageBox.critical(self, "读取失败", str(e))
+
+    def load_maoli_manual_file(self, file_path):
+        try:
+            sheets = pd.read_excel(file_path, sheet_name=None, engine='openpyxl')
+            if len(sheets) < 3:
+                QMessageBox.warning(self, "格式错误", "订单毛利手工表需要包含3个sheet：毛利_PDT产品线、毛利_行业报表、毛利_办事处报表")
+                return
+            self.current_df_maoli_manual = sheets
+            fname = os.path.basename(file_path)
+            sheet_names = list(sheets.keys())
+            self.upload_btn_6.setText(f"   ✅  订单毛利手工表已加载：{fname}\n       （含 {len(sheet_names)} 个sheet，点击可重新选择）")
+            self.upload_btn_6.setStyleSheet(self.upload_card_ok_style)
+            self.download_btn.setEnabled(False)
+            self.current_report_path = None
+        except Exception as e:
+            QMessageBox.critical(self, "读取失败", str(e))
+
     def start_generate(self):
         if self.current_df is None:
             QMessageBox.warning(self, "无数据", "请先上传服务订单报表")
             return
 
         try:
-            if self.year25_data is None:
-                dialog = YearInputDialog(self)
-                if dialog.exec_() == QDialog.Accepted:
-                    values = dialog.get_values()
-                    if values is None:
-                        QMessageBox.warning(self, "输入错误", "请输入有效的数字")
-                        return
-                    self.year25_data = values
-                else:
+            zonghe_text = self.input_zonghe.text().strip()
+            shuju_text = self.input_shuju.text().strip()
+            chanjiao_text = self.input_chanjiao.text().strip()
+            
+            if zonghe_text or shuju_text or chanjiao_text:
+                try:
+                    zonghe_25 = float(zonghe_text) if zonghe_text else 0
+                    shuju_25 = float(shuju_text) if shuju_text else 0
+                    chanjiao_25 = float(chanjiao_text) if chanjiao_text else 0
+                    self.year25_data = (zonghe_25, shuju_25, chanjiao_25)
+                except ValueError:
+                    QMessageBox.warning(self, "输入错误", "请输入有效的数字")
                     return
+            else:
+                self.year25_data = None
 
             self.generate_btn.setEnabled(False)
             self.download_btn.setEnabled(False)
 
             week_start = self.week_start_edit.date().toPyDate()
             week_end = self.week_end_edit.date().toPyDate()
-            self.report_thread = ReportThread(process_order, self.current_df,
-                                          week_start=week_start, week_end=week_end,
-                                          df_mgmt=self.current_df_mgmt,
-                                          df_oem=self.current_df_oem,
-                                          df_manual=self.current_df_manual,
-                                          year25_data=self.year25_data)
+            
+            def process_both():
+                result1 = process_order(self.current_df,
+                                      week_start=week_start, week_end=week_end,
+                                      df_mgmt=self.current_df_mgmt,
+                                      df_oem=self.current_df_oem,
+                                      df_manual=self.current_df_manual,
+                                      year25_data=self.year25_data)
+                
+                if self.current_df_maoli is not None:
+                    maoli_manual = None
+                    if self.current_df_maoli_manual is not None:
+                        maoli_manual = self.current_df_maoli_manual
+                    result2 = process_maoli_order(self.current_df_maoli,
+                                                  week_start=week_start, week_end=week_end,
+                                                  df_mgmt=None, df_oem=None,
+                                                  df_manual=maoli_manual)
+                    result1.update(result2)
+                
+                return result1
+            
+            self.report_thread = ReportThread(process_both)
             self.report_thread.finished.connect(self.on_generate_finished)
             self.report_thread.error.connect(self.on_generate_error)
             self.report_thread.start()
@@ -1391,20 +1571,75 @@ class OrderModule(BaseModule):
 
         fd, temp_path = tempfile.mkstemp(suffix='.xlsx')
         os.close(fd)
-        # 写入 Excel 并应用样式
         with pd.ExcelWriter(temp_path, engine='openpyxl') as writer:
             for sheet_name, df_sheet in result.items():
                 if df_sheet is not None and not df_sheet.empty:
                     df_sheet.to_excel(writer, sheet_name=sheet_name, index=False)
-            # 应用样式（合并单元格、边框、加粗等）
             apply_excel_style(writer.book)
         self.current_report_path = temp_path
+        self.current_report_data = result
         self.download_btn.setEnabled(True)
+        self.download_full_btn.setEnabled(True)
         self.generate_btn.setEnabled(True)
         QMessageBox.information(self, "报表生成完毕",
-            f"报表已生成，点击「下载报表」保存文件\n\n{self._validation_msg}")
+            f"报表已生成，点击「下载报表」或「下载完整报表」保存文件\n\n{self._validation_msg}")
 
     def on_generate_error(self, error_msg):
         self.progress.close()
         self.generate_btn.setEnabled(True)
         QMessageBox.critical(self, "生成报表失败", error_msg)
+
+    def save_report(self):
+        try:
+            if not hasattr(self, 'current_report_data') or not self.current_report_data:
+                QMessageBox.warning(self, "无报表", "请先生成报表")
+                return
+            desktop = os.path.join(os.environ['USERPROFILE'], 'Desktop')
+            default_path = os.path.join(desktop, "报表结果.xlsx")
+            save_path, _ = QFileDialog.getSaveFileName(
+                self, "保存报表", default_path, "Excel文件 (*.xlsx)",
+                options=QFileDialog.DontUseNativeDialog
+            )
+            if not save_path:
+                return
+            calc_sheets = ['行业计算表', '办事处计算表', '毛利_行业计算表', '毛利_办事处计算表']
+            result = {k: v for k, v in self.current_report_data.items() if k not in calc_sheets}
+            fd, temp_path = tempfile.mkstemp(suffix='.xlsx')
+            os.close(fd)
+            with pd.ExcelWriter(temp_path, engine='openpyxl') as writer:
+                for sheet_name, df_sheet in result.items():
+                    if df_sheet is not None and not df_sheet.empty:
+                        df_sheet.to_excel(writer, sheet_name=sheet_name, index=False)
+                apply_excel_style(writer.book)
+            shutil.copy2(temp_path, save_path)
+            QMessageBox.information(self, "保存成功", f"报表已保存至：{save_path}")
+        except Exception as e:
+            import traceback
+            QMessageBox.critical(self, "保存失败", f"保存报表时发生错误：\n{str(e)}\n\n{traceback.format_exc()}")
+
+    def save_report_full(self):
+        try:
+            if not hasattr(self, 'current_report_data') or not self.current_report_data:
+                QMessageBox.warning(self, "无报表", "请先生成报表")
+                return
+            desktop = os.path.join(os.environ['USERPROFILE'], 'Desktop')
+            default_path = os.path.join(desktop, "报表完整版.xlsx")
+            save_path, _ = QFileDialog.getSaveFileName(
+                self, "保存完整报表", default_path, "Excel文件 (*.xlsx)",
+                options=QFileDialog.DontUseNativeDialog
+            )
+            if not save_path:
+                return
+            result = self.current_report_data
+            fd, temp_path = tempfile.mkstemp(suffix='.xlsx')
+            os.close(fd)
+            with pd.ExcelWriter(temp_path, engine='openpyxl') as writer:
+                for sheet_name, df_sheet in result.items():
+                    if df_sheet is not None and not df_sheet.empty:
+                        df_sheet.to_excel(writer, sheet_name=sheet_name, index=False)
+                apply_excel_style(writer.book)
+            shutil.copy2(temp_path, save_path)
+            QMessageBox.information(self, "保存成功", f"完整报表已保存至：{save_path}")
+        except Exception as e:
+            import traceback
+            QMessageBox.critical(self, "保存失败", f"保存报表时发生错误：\n{str(e)}\n\n{traceback.format_exc()}")
