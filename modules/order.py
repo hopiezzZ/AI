@@ -1473,8 +1473,8 @@ class OrderModule(BaseModule):
             QMessageBox.critical(self, "读取失败", str(e))
 
     def start_generate(self):
-        if self.current_df is None:
-            QMessageBox.warning(self, "无数据", "请先上传服务订单报表")
+        if self.current_df is None and self.current_df_maoli is None:
+            QMessageBox.warning(self, "无数据", "请至少上传服务订单报表或订单毛利表之一")
             return
 
         try:
@@ -1496,17 +1496,21 @@ class OrderModule(BaseModule):
 
             self.generate_btn.setEnabled(False)
             self.download_btn.setEnabled(False)
+            self.download_full_btn.setEnabled(False)
 
             week_start = self.week_start_edit.date().toPyDate()
             week_end = self.week_end_edit.date().toPyDate()
             
             def process_both():
-                result1 = process_order(self.current_df,
-                                      week_start=week_start, week_end=week_end,
-                                      df_mgmt=self.current_df_mgmt,
-                                      df_oem=self.current_df_oem,
-                                      df_manual=self.current_df_manual,
-                                      year25_data=self.year25_data)
+                result = {}
+                
+                if self.current_df is not None:
+                    result = process_order(self.current_df,
+                                          week_start=week_start, week_end=week_end,
+                                          df_mgmt=self.current_df_mgmt,
+                                          df_oem=self.current_df_oem,
+                                          df_manual=self.current_df_manual,
+                                          year25_data=self.year25_data)
                 
                 if self.current_df_maoli is not None:
                     maoli_manual = None
@@ -1516,9 +1520,9 @@ class OrderModule(BaseModule):
                                                   week_start=week_start, week_end=week_end,
                                                   df_mgmt=None, df_oem=None,
                                                   df_manual=maoli_manual)
-                    result1.update(result2)
+                    result.update(result2)
                 
-                return result1
+                return result
             
             self.report_thread = ReportThread(process_both)
             self.report_thread.finished.connect(self.on_generate_finished)
@@ -1535,39 +1539,74 @@ class OrderModule(BaseModule):
     def on_generate_finished(self, result):
         self.progress.close()
 
-        # 跨sheet数字校验：3个sheet的总计应一致
-        # PDT → 服务产品经理业绩总计的合计
-        # 行业报表 → 总计行的服务小计
-        # 办事处报表 → 总计行的服务小计
-        df_pdt = result['PDT产品线']
-        pdt_total_mask = df_pdt['二级分类'] == '服务产品经理业绩总计'
-        pdt_total = int(df_pdt[pdt_total_mask]['合计'].values[0]) if pdt_total_mask.any() else 0
+        order_totals = {}
+        maoli_totals = {}
+        
+        if 'PDT产品线' in result and result['PDT产品线'] is not None:
+            df_pdt = result['PDT产品线']
+            pdt_total_mask = df_pdt['二级分类'] == '服务产品经理业绩总计'
+            pdt_total = int(df_pdt[pdt_total_mask]['合计'].values[0]) if pdt_total_mask.any() else 0
+            order_totals['PDT产品线'] = pdt_total
 
-        totals = {'PDT产品线': pdt_total}
+        if '行业报表' in result and result['行业报表'] is not None:
+            df_ind = result['行业报表']
+            ind_total_mask = df_ind['行业'] == '总计'
+            ind_total = int(df_ind[ind_total_mask]['服务小计'].values[0]) if ind_total_mask.any() else 0
+            order_totals['行业报表'] = ind_total
 
-        df_ind = result['行业报表']
-        ind_total_mask = df_ind['行业'] == '总计'
-        ind_total = int(df_ind[ind_total_mask]['服务小计'].values[0]) if ind_total_mask.any() else 0
-        totals['行业报表'] = ind_total
+        if '办事处报表' in result and result['办事处报表'] is not None:
+            df_off = result['办事处报表']
+            off_total_mask = df_off['省办'] == '总计'
+            off_total = int(df_off[off_total_mask]['服务小计'].values[0]) if off_total_mask.any() else 0
+            order_totals['办事处报表'] = off_total
 
-        df_off = result['办事处报表']
-        off_total_mask = df_off['省办'] == '总计'
-        off_total = int(df_off[off_total_mask]['服务小计'].values[0]) if off_total_mask.any() else 0
-        totals['办事处报表'] = off_total
+        if '毛利_PDT产品线' in result and result['毛利_PDT产品线'] is not None:
+            df_maoli_pdt = result['毛利_PDT产品线']
+            maoli_pdt_mask = df_maoli_pdt['二级分类'] == '服务产品经理业绩总计'
+            maoli_pdt_total = int(df_maoli_pdt[maoli_pdt_mask]['合计'].values[0]) if maoli_pdt_mask.any() else 0
+            maoli_totals['毛利_PDT产品线'] = maoli_pdt_total
 
-        totals_list = list(totals.items())
-        ref_name, ref_val = totals_list[0]
-        all_match = True
-        for name, val in totals_list[1:]:
-            if abs(val - ref_val) > 2:
-                all_match = False
-                break
+        if '毛利_行业报表' in result and result['毛利_行业报表'] is not None:
+            df_maoli_ind = result['毛利_行业报表']
+            maoli_ind_mask = df_maoli_ind['行业'] == '总计'
+            maoli_ind_total = int(df_maoli_ind[maoli_ind_mask]['服务小计'].values[0]) if maoli_ind_mask.any() else 0
+            maoli_totals['毛利_行业报表'] = maoli_ind_total
 
-        detail = '\n'.join(f'    {n}:  {int(v):,} 万元' for n, v in totals.items())
-        if all_match:
-            self._validation_msg = f'✅ 数据校验通过，三个 Sheet 总计一致\n\n{detail}'
-        else:
-            self._validation_msg = f'⚠️ 数据校验不一致！\n\n{detail}\n\n差额可能由手工数据加和导致，请核对各数据源'
+        if '毛利_办事处报表' in result and result['毛利_办事处报表'] is not None:
+            df_maoli_off = result['毛利_办事处报表']
+            maoli_off_mask = df_maoli_off['省办'] == '总计'
+            maoli_off_total = int(df_maoli_off[maoli_off_mask]['服务小计'].values[0]) if maoli_off_mask.any() else 0
+            maoli_totals['毛利_办事处报表'] = maoli_off_total
+
+        validation_parts = []
+        
+        if order_totals:
+            if len(order_totals) > 1:
+                vals = list(order_totals.values())
+                order_match = all(abs(v - vals[0]) <= 2 for v in vals)
+                detail_order = '\n    '.join(f'{k}: {int(v):,} 万元' for k, v in order_totals.items())
+                if order_match:
+                    validation_parts.append(f'✅ 服务订单部分校验通过\n    {detail_order}')
+                else:
+                    validation_parts.append(f'⚠️ 服务订单部分校验不一致！\n    {detail_order}')
+            else:
+                k, v = list(order_totals.items())[0]
+                validation_parts.append(f'服务订单部分\n    {k}: {int(v):,} 万元')
+
+        if maoli_totals:
+            if len(maoli_totals) > 1:
+                vals = list(maoli_totals.values())
+                maoli_match = all(abs(v - vals[0]) <= 2 for v in vals)
+                detail_maoli = '\n    '.join(f'{k}: {int(v):,} 万元' for k, v in maoli_totals.items())
+                if maoli_match:
+                    validation_parts.append(f'✅ 毛利部分校验通过\n    {detail_maoli}')
+                else:
+                    validation_parts.append(f'⚠️ 毛利部分校验不一致！\n    {detail_maoli}')
+            else:
+                k, v = list(maoli_totals.items())[0]
+                validation_parts.append(f'毛利部分\n    {k}: {int(v):,} 万元')
+
+        self._validation_msg = '\n\n'.join(validation_parts) if validation_parts else '报表已生成'
 
         fd, temp_path = tempfile.mkstemp(suffix='.xlsx')
         os.close(fd)
