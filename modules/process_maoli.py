@@ -598,6 +598,7 @@ def process_maoli_order(df, week_start=None, week_end=None,
         print(f'[毛利手工数据] sheet数={len(manual_keys)}, sheets={manual_keys}')
 
         months = ['1月','2月','3月','4月','5月','6月','7月','8月','9月','10月','11月','12月']
+        manual_service_cols = ['数据安全管理中心', '数据安全OEM IN', '数据安全产品转售', '产教融合产品转售']
         service_cols = ['安全协维','安全运营','攻防服务','专家服务','安全产品转售',
                         '海外服务','数据安全管理中心','数据安全OEM IN','数据安全产品转售','数据安全服务',
                         '产教融合产品转售','产教融合服务','安全集成服务']
@@ -607,12 +608,6 @@ def process_maoli_order(df, week_start=None, week_end=None,
 
         if manual_pdt is not None:
             manual_months = [m for m in months if m in manual_pdt.columns]
-            pdt_cat_idx = None
-            for idx, c in enumerate(manual_pdt.columns):
-                if '二级分类' in str(c):
-                    pdt_cat_idx = idx
-                    break
-            pdt_total_added = 0
             for i, (mrow, prow) in enumerate(zip(manual_pdt.itertuples(index=False), pdt_rows)):
                 if not prow['三级分类'] or (prow['三级分类'] or '').endswith('小计') or prow['二级分类'] == '服务产品经理业绩总计':
                     continue
@@ -627,9 +622,6 @@ def process_maoli_order(df, week_start=None, week_end=None,
                     if val != 0:
                         old_val = prow.get(month, 0)
                         prow[month] = old_val + val
-                        pdt_total_added += round(val)
-            print(f'[毛利手工-PDT] 加和总量={pdt_total_added}')
-
             for row in pdt_rows:
                 if not row['三级分类'] or (row['三级分类'] or '').endswith('小计') or row['二级分类'] == '服务产品经理业绩总计':
                     continue
@@ -648,23 +640,18 @@ def process_maoli_order(df, week_start=None, week_end=None,
                 if sub_row and cat_rows:
                     for col in months + ['Q1小计','Q2小计','Q3小计','Q4小计','合计','本周新增']:
                         sub_row[col] = sum(r.get(col,0) for r in cat_rows)
-                    if cat in {'综合服务': 18000, '数据安全': 7000, '产教融合': 5000}:
-                        target = {'综合服务': 18000, '数据安全': 7000, '产教融合': 5000}[cat]
-                        cat_rows[0]['完成率'] = f'{round(sub_row["合计"] / target * 100, 2)}%'
             tgt_row = next((r for r in pdt_rows if r['二级分类']=='服务产品经理业绩总计'), None)
             if tgt_row:
                 data_rows_t = [r for r in pdt_rows if r['三级分类'] and not (r['三级分类'] or '').endswith('小计') and r['二级分类']!='安全集成服务']
                 for col in months + ['Q1小计','Q2小计','Q3小计','Q4小计','合计','本周新增']:
                     tgt_row[col] = sum(r.get(col,0) for r in data_rows_t)
-                tgt_row['完成率'] = f'{round(tgt_row["合计"] / 30000 * 100, 2)}%' if tgt_row['合计'] else '0.00%'
+            print(f'[毛利手工-PDT] 数据加和完成')
 
         if manual_ind is not None:
             ind_rows_list = list(df_industry_new.itertuples(index=False))
-            ind_new_added = 0
             for i, (mrow, orow) in enumerate(zip(manual_ind.itertuples(index=False), ind_rows_list)):
                 if orow.行业 == '总计':
                     continue
-                row_added = 0
                 for col in service_cols:
                     if col in manual_ind.columns:
                         col_idx = manual_ind.columns.get_loc(col)
@@ -675,28 +662,24 @@ def process_maoli_order(df, week_start=None, week_end=None,
                         except (ValueError, TypeError):
                             val = 0.0
                         if val != 0:
-                            old_val = getattr(orow, col, 0) if hasattr(orow, col) else df_industry_new.at[i, col]
-                            df_industry_new.at[i, col] = old_val + val
-                            row_added += round(val)
-                if row_added != 0:
-                    df_industry_new.at[i, '服务小计'] = sum(
-                        df_industry_new.at[i, c] for c in sub_keys)
-                    ind_new_added += row_added
+                            df_industry_new.at[i, col] = df_industry_new.at[i, col] + val
+            for i in range(len(df_industry_new)):
+                if df_industry_new.at[i, '行业'] == '总计':
+                    continue
+                df_industry_new.at[i, '服务小计'] = sum(df_industry_new.at[i, c] for c in sub_keys)
             total_mask = df_industry_new['行业'] == '总计'
             if total_mask.any():
                 total_idx = df_industry_new[total_mask].index[0]
                 for col in service_cols + ['服务小计']:
                     if col in df_industry_new.columns:
-                        df_industry_new.at[total_idx, col] = df_industry_new[col].drop(total_idx).sum()
-            print(f'[毛利手工-行业] 报表加和={ind_new_added}')
+                        df_industry_new.at[total_idx, col] = sum(df_industry_new.at[j, col] for j in df_industry_new.index if j != total_idx)
+            print(f'[毛利手工-行业报表] 所有列数据加和完成')
 
         if manual_off is not None:
-            off_new_rows = list(df_office_new.itertuples(index=False))
-            off_new_added = 0
-            for i, (mrow, orow) in enumerate(zip(manual_off.itertuples(index=False), off_new_rows)):
+            off_rows_list = list(df_office_new.itertuples(index=False))
+            for i, (mrow, orow) in enumerate(zip(manual_off.itertuples(index=False), off_rows_list)):
                 if orow.省办 == '总计':
                     continue
-                row_added = 0
                 for col in service_cols:
                     if col in manual_off.columns:
                         col_idx = manual_off.columns.get_loc(col)
@@ -707,28 +690,27 @@ def process_maoli_order(df, week_start=None, week_end=None,
                         except (ValueError, TypeError):
                             val = 0.0
                         if val != 0:
-                            old_val = getattr(orow, col, 0) if hasattr(orow, col) else df_office_new.at[i, col]
-                            df_office_new.at[i, col] = old_val + val
-                            row_added += round(val)
-                if row_added != 0:
-                    df_office_new.at[i, '服务小计'] = sum(
-                        df_office_new.at[i, c] for c in sub_keys)
-                    off_new_added += row_added
+                            df_office_new.at[i, col] = df_office_new.at[i, col] + val
+            for i in range(len(df_office_new)):
+                if df_office_new.at[i, '省办'] == '总计':
+                    continue
+                df_office_new.at[i, '服务小计'] = sum(df_office_new.at[i, c] for c in sub_keys)
             total_mask = df_office_new['省办'] == '总计'
             if total_mask.any():
                 total_idx = df_office_new[total_mask].index[0]
                 for col in service_cols + ['服务小计']:
                     if col in df_office_new.columns:
-                        df_office_new.at[total_idx, col] = df_office_new[col].drop(total_idx).sum()
-            print(f'[毛利手工-办事处] 报表加和={off_new_added}')
+                        df_office_new.at[total_idx, col] = sum(df_office_new.at[j, col] for j in df_office_new.index if j != total_idx)
+            print(f'[毛利手工-办事处报表] 所有列数据加和完成')
 
     pdt_numeric = months_list + ['Q1小计','Q2小计','Q3小计','Q4小计','合计','本周新增']
     for row in pdt_rows:
         for col in pdt_numeric:
             if col in row and isinstance(row[col], (int, float)):
                 row[col] = round(row[col])
+
     df_pdt = pd.DataFrame(pdt_rows, columns=column_order)
-    for df_ref in [df_industry_calc, df_industry_new, df_office_calc, df_office_new]:
+    for df_ref in [df_industry_new, df_office_new]:
         for col in numeric_cols:
             if col in df_ref.columns:
                 df_ref[col] = pd.to_numeric(df_ref[col], errors='coerce').fillna(0).round().astype(int)
