@@ -209,7 +209,7 @@ def process_extra_file(df_extra, service_name):
 
 
 def process_order(df, week_start=None, week_end=None,
-                  df_mgmt=None, df_oem=None, df_manual=None, year25_data=None):
+                  df_mgmt=None, df_oem=None, df_pwd_oem=None, df_manual=None, year25_data=None):
     """订单报表处理函数"""
     # 列名别名映射
     column_mapping = {
@@ -265,6 +265,7 @@ def process_order(df, week_start=None, week_end=None,
     # 处理额外数据源
     pdt1, ind1, off1 = process_extra_file(df_mgmt, '数据安全管理中心')
     pdt2, ind2, off2 = process_extra_file(df_oem, '数据安全OEM IN')
+    pdt3, ind3, off3 = process_extra_file(df_pwd_oem, '密码安全OEM IN')
 
     # 构建PDT报表
     def sumif(bom_list=None, month=None, product_family=None, industry=None, office=None, use_week_mask=False, hq_industry=None):
@@ -301,10 +302,11 @@ def process_order(df, week_start=None, week_end=None,
     pdt_data = {}
     week_data = {}
     categories = {
-        '综合服务': ['安全驻场服务', '云端运营服务', '安全攻防服务', '安全咨询服务', '安全服务工具', '海外安全服务'],
+        '综合服务': ['安全驻场服务', '云端运营服务', '安全攻防服务', '安全咨询服务', '密码安全服务', '安全服务工具', '海外安全服务'],
         '数据安全': ['数据安全管理中心', '数据安全OEM IN', '数据安全产品转售', '数据安全服务'],
         '产教融合': ['产教融合产品转售', '产教融合服务'],
-        '安全集成服务': ['安全集成服务']
+        '安全集成服务': ['安全集成服务'],
+        '密码安全': ['密码安全OEM IN', '密码转售']
     }
 
     for month in months_list:
@@ -362,13 +364,14 @@ def process_order(df, week_start=None, week_end=None,
             week_data[sub] = week_val
 
     # 融合额外数据源到 PDT pdt_data
-    for src in (pdt1, pdt2):
+    for src in (pdt1, pdt2, pdt3):
         for key, val in src.items():
             pdt_data[key] = pdt_data.get(key, 0) + val
 
     # 构建PDT报表
     pdt_rows = []
     integration_rows_data = []
+    pwd_rows_data = []
     targets = {'综合服务': 18000, '数据安全': 7000, '产教融合': 5000}
     for cat, subcats in categories.items():
         cat_rows = []
@@ -388,8 +391,10 @@ def process_order(df, week_start=None, week_end=None,
             row['Q4小计'] = q4
             row['合计'] = q1+q2+q3+q4
             row['本周新增'] = week_data.get(sub, 0)
-            row['2026订单目标'] = ''
-            row['完成率'] = ''
+            row['2026订单目标'] = '-'
+            row['完成率'] = '-'
+            if cat == '密码安全':
+                row['本周新增'] = 0
             cat_rows.append(row)
         if cat in targets:
             target = targets[cat]
@@ -398,6 +403,8 @@ def process_order(df, week_start=None, week_end=None,
             cat_rows[0]['完成率'] = f'{round(cat_total / target * 100, 2)}%'
         if cat == '安全集成服务':
             integration_rows_data = cat_rows
+        elif cat == '密码安全':
+            pwd_rows_data = cat_rows
         else:
             pdt_rows.extend(cat_rows)
             if cat in targets:
@@ -412,7 +419,7 @@ def process_order(df, week_start=None, week_end=None,
                 subtotal['2026订单目标'] = ''
                 subtotal['完成率'] = ''
                 pdt_rows.append(subtotal)
-    data_rows = [r for r in pdt_rows if r['三级分类'] and not r['三级分类'].endswith('小计') and r['二级分类'] != '安全集成服务']
+    data_rows = [r for r in pdt_rows if r['三级分类'] and not r['三级分类'].endswith('小计') and r['二级分类'] not in ('安全集成服务', '密码安全')]
     total_row = {'二级分类': '服务产品经理业绩总计', '三级分类': ''}
     for col in months_list + ['Q1小计', 'Q2小计', 'Q3小计', 'Q4小计', '合计', '本周新增']:
         total_row[col] = sum(r[col] for r in data_rows)
@@ -421,6 +428,7 @@ def process_order(df, week_start=None, week_end=None,
     total_row['完成率'] = f'{round(total_val / 30000 * 100, 2)}%' if total_val else '0.00%'
     pdt_rows.append(total_row)
     pdt_rows.extend(integration_rows_data)
+    pdt_rows.extend(pwd_rows_data)
     column_order = ['二级分类', '三级分类'] + \
                    ['1月', '2月', '3月', 'Q1小计'] + \
                    ['4月', '5月', '6月', 'Q2小计'] + \
@@ -455,10 +463,10 @@ def process_order(df, week_start=None, week_end=None,
             industry_to_dept[ind] = dept
             ordered_industries.append(ind)
 
-    numeric_cols = ['安全协维','安全运营','攻防服务','专家服务','安全产品转售',
+    numeric_cols = ['安全协维','安全运营','攻防服务','专家服务','密码安全服务','安全产品转售',
                     '海外服务','数据安全管理中心','数据安全OEM IN','数据安全产品转售','数据安全服务',
-                    '产教融合产品转售','产教融合服务','服务小计','安全集成服务']
-    sub_keys = ['安全协维','安全运营','攻防服务','专家服务','安全产品转售','海外服务',
+                    '产教融合产品转售','产教融合服务','服务小计','安全集成服务','密码安全OEM IN','密码转售']
+    sub_keys = ['安全协维','安全运营','攻防服务','专家服务','密码安全服务','安全产品转售','海外服务',
                 '数据安全管理中心','数据安全OEM IN','数据安全产品转售','数据安全服务',
                 '产教融合产品转售','产教融合服务']
 
@@ -473,6 +481,7 @@ def process_order(df, week_start=None, week_end=None,
         raw['安全运营'] = total_op - excl_op
         raw['攻防服务'] = sumif(bom_list=bom_gong_fang, industry=ind)
         raw['专家服务'] = sumif(bom_list=bom_consult, industry=ind)
+        raw['密码安全服务'] = 0.0
         raw['安全产品转售'] = sumif(bom_list=bom_tool, industry=ind)
         raw['海外服务'] = sumif(bom_list=bom_overseas, industry=ind)
         raw['数据安全管理中心'] = sum(val for key, val in ind1.get(ind, {}).items()
@@ -485,6 +494,9 @@ def process_order(df, week_start=None, week_end=None,
         raw['产教融合服务'] = sumif(bom_list=bom_education, industry=ind)
         raw['服务小计'] = sum(raw[k] for k in sub_keys)
         raw['安全集成服务'] = sumif(bom_list=bom_integration, industry=ind)
+        raw['密码安全OEM IN'] = sum(val for key, val in ind3.get(ind, {}).items()
+                                if key == '密码安全OEM IN')
+        raw['密码转售'] = 0.0
         industry_raws.append(raw)
         row = {'事业部': dept, '行业': ind}
         for col in numeric_cols:
@@ -493,7 +505,10 @@ def process_order(df, week_start=None, week_end=None,
 
     total_row = {'事业部': '', '行业': '总计'}
     for col in numeric_cols:
-        total_row[col] = sum(r[col] for r in industry_raws)
+        if col in ('密码安全OEM IN', '密码转售'):
+            total_row[col] = 0
+        else:
+            total_row[col] = sum(r[col] for r in industry_raws)
     industry_rows.append(total_row)
 
     df_industry_calc = pd.DataFrame(industry_rows)
@@ -552,7 +567,10 @@ def process_order(df, week_start=None, week_end=None,
 
     total_row_new = {'事业部': '', '行业': '总计'}
     for col in numeric_cols:
-        total_row_new[col] = sum(r[col] for r in new_industry_raws)
+        if col in ('密码安全OEM IN', '密码转售'):
+            total_row_new[col] = 0
+        else:
+            total_row_new[col] = sum(r[col] for r in new_industry_raws)
     new_industry_rows.append(total_row_new)
 
     df_industry_new = pd.DataFrame(new_industry_rows)
@@ -634,9 +652,9 @@ def process_order(df, week_start=None, week_end=None,
             office_to_region[off] = region
             ordered_offices.append(off)
 
-    office_numeric_cols = ['安全协维','安全运营','攻防服务','专家服务','安全产品转售',
+    office_numeric_cols = ['安全协维','安全运营','攻防服务','专家服务','密码安全服务','安全产品转售',
                            '海外服务','数据安全管理中心','数据安全OEM IN','数据安全产品转售','数据安全服务',
-                           '产教融合产品转售','产教融合服务','服务小计','安全集成服务']
+                           '产教融合产品转售','产教融合服务','服务小计','安全集成服务','密码安全OEM IN','密码转售']
 
     office_rows = []
     office_raws = []
@@ -651,15 +669,19 @@ def process_order(df, week_start=None, week_end=None,
         raw['安全运营'] = total_op - excl_op
         raw['攻防服务'] = sumif(bom_list=bom_gong_fang, **skw)
         raw['专家服务'] = sumif(bom_list=bom_consult, **skw)
+        raw['密码安全服务'] = 0.0
         raw['安全产品转售'] = sumif(bom_list=bom_tool, **skw)
         raw['海外服务'] = sumif(bom_list=bom_overseas, **skw)
         if is_hq:
             raw['数据安全管理中心'] = off1.get(off, {}).get('数据安全管理中心', 0)
             raw['数据安全OEM IN'] = off2.get(off, {}).get('数据安全OEM IN', 0)
+            pwd_oem_val = off3.get(off, {}).get('密码安全OEM IN', 0)
+            raw['密码安全OEM IN'] = pwd_oem_val
         else:
             region_short = region.rstrip('省市区')
             mgmt_val = 0.0
             oem_val = 0.0
+            pwd_val = 0.0
             for try_key in (off, region, region_short):
                 mgmt_val = off1.get(try_key, {}).get('数据安全管理中心', 0)
                 if mgmt_val != 0:
@@ -668,14 +690,20 @@ def process_order(df, week_start=None, week_end=None,
                 oem_val = off2.get(try_key, {}).get('数据安全OEM IN', 0)
                 if oem_val != 0:
                     break
+            for try_key in (off, region, region_short):
+                pwd_val = off3.get(try_key, {}).get('密码安全OEM IN', 0)
+                if pwd_val != 0:
+                    break
             raw['数据安全管理中心'] = mgmt_val
             raw['数据安全OEM IN'] = oem_val
+            raw['密码安全OEM IN'] = pwd_val
         raw['数据安全产品转售'] = 0.0
         raw['数据安全服务'] = sumif(bom_list=bom_data_security, **skw)
         raw['产教融合产品转售'] = 0.0
         raw['产教融合服务'] = sumif(bom_list=bom_education, **skw)
         raw['服务小计'] = sum(raw[k] for k in sub_keys)
         raw['安全集成服务'] = sumif(bom_list=bom_integration, **skw)
+        raw['密码转售'] = 0.0
         office_raws.append(raw)
         row = {'区域': region, '办事处': off}
         for col in office_numeric_cols:
@@ -684,7 +712,10 @@ def process_order(df, week_start=None, week_end=None,
 
     total_row_office = {'区域': '', '办事处': '总计'}
     for col in office_numeric_cols:
-        total_row_office[col] = sum(r[col] for r in office_raws)
+        if col in ('密码安全OEM IN', '密码转售'):
+            total_row_office[col] = 0
+        else:
+            total_row_office[col] = sum(r[col] for r in office_raws)
     office_rows.append(total_row_office)
 
     df_office_calc = pd.DataFrame(office_rows)
@@ -738,7 +769,10 @@ def process_order(df, week_start=None, week_end=None,
 
     total_row_new_off = {'区域': '', '省办': '总计'}
     for col in office_numeric_cols:
-        total_row_new_off[col] = sum(r[col] for r in new_off_raws)
+        if col in ('密码安全OEM IN', '密码转售'):
+            total_row_new_off[col] = 0
+        else:
+            total_row_new_off[col] = sum(r[col] for r in new_off_raws)
     new_off_rows.append(total_row_new_off)
 
     df_office_new = pd.DataFrame(new_off_rows)
@@ -753,10 +787,10 @@ def process_order(df, week_start=None, week_end=None,
         print(f'[手工数据] sheet数={len(manual_keys)}, sheets={manual_keys}')
 
         months = ['1月','2月','3月','4月','5月','6月','7月','8月','9月','10月','11月','12月']
-        service_cols = ['安全协维','安全运营','攻防服务','专家服务','安全产品转售',
+        service_cols = ['安全协维','安全运营','攻防服务','专家服务','密码安全服务','安全产品转售',
                         '海外服务','数据安全管理中心','数据安全OEM IN','数据安全产品转售','数据安全服务',
                         '产教融合产品转售','产教融合服务','安全集成服务']
-        sub_keys = ['安全协维','安全运营','攻防服务','专家服务','安全产品转售','海外服务',
+        sub_keys = ['安全协维','安全运营','攻防服务','专家服务','密码安全服务','安全产品转售','海外服务',
                     '数据安全管理中心','数据安全OEM IN','数据安全产品转售','数据安全服务',
                     '产教融合产品转售','产教融合服务']
 
@@ -809,7 +843,7 @@ def process_order(df, week_start=None, week_end=None,
                         cat_rows[0]['完成率'] = f'{round(sub_row["合计"] / target * 100, 2)}%'
             tgt_row = next((r for r in pdt_rows if r['二级分类']=='服务产品经理业绩总计'), None)
             if tgt_row:
-                data_rows_t = [r for r in pdt_rows if r['三级分类'] and not (r['三级分类'] or '').endswith('小计') and r['二级分类']!='安全集成服务']
+                data_rows_t = [r for r in pdt_rows if r['三级分类'] and not (r['三级分类'] or '').endswith('小计') and r['二级分类'] not in ('安全集成服务', '密码安全')]
                 for col in months + ['Q1小计','Q2小计','Q3小计','Q4小计','合计','本周新增']:
                     tgt_row[col] = sum(r.get(col,0) for r in data_rows_t)
                 tgt_row['完成率'] = f'{round(tgt_row["合计"] / 30000 * 100, 2)}%' if tgt_row['合计'] else '0.00%'
@@ -1005,6 +1039,7 @@ class OrderModule(BaseModule):
 
         self.current_df_mgmt = None
         self.current_df_oem = None
+        self.current_df_pwd_oem = None
         self.current_df_manual = None
         self.year25_data = None
         self.current_df_maoli = None
@@ -1071,6 +1106,14 @@ class OrderModule(BaseModule):
         self.upload_btn_3.clicked.connect(self.select_oem_file)
         self.upload_btn_3.file_dropped.connect(lambda p: self._on_drop_file(p, 3))
         layout.addWidget(self.upload_btn_3)
+
+        self.upload_btn_pwd_oem = DropButton("   📂  请上传密码安全OEM IN产品报表（可选）\n       点击选择 Excel 文件")
+        self.upload_btn_pwd_oem.setMinimumHeight(72)
+        self.upload_btn_pwd_oem.setCursor(Qt.PointingHandCursor)
+        self.upload_btn_pwd_oem.setStyleSheet(upload_card_style)
+        self.upload_btn_pwd_oem.clicked.connect(self.select_pwd_oem_file)
+        self.upload_btn_pwd_oem.file_dropped.connect(lambda p: self._on_drop_file(p, 7))
+        layout.addWidget(self.upload_btn_pwd_oem)
 
         self.upload_btn_4 = DropButton("   📂  请导入手工计入表格（可选）\n       点击选择 Excel 文件")
         self.upload_btn_4.setMinimumHeight(72)
@@ -1297,6 +1340,8 @@ class OrderModule(BaseModule):
             self.load_maoli_file(path)
         elif slot == 6:
             self.load_maoli_manual_file(path)
+        elif slot == 7:
+            self.load_pwd_oem_file(path)
 
     def load_file(self, file_path):
         try:
@@ -1315,6 +1360,7 @@ class OrderModule(BaseModule):
         self.main_file_path = None
         self.current_df_mgmt = None
         self.current_df_oem = None
+        self.current_df_pwd_oem = None
         self.current_df_manual = None
         self.year25_data = None
         self.current_df_maoli = None
@@ -1337,6 +1383,8 @@ class OrderModule(BaseModule):
         self.upload_btn_5.setStyleSheet(self.upload_card_style)
         self.upload_btn_6.setText("   📂  请上传订单毛利手工表（可选）\n       点击选择 Excel 文件")
         self.upload_btn_6.setStyleSheet(self.upload_card_style)
+        self.upload_btn_pwd_oem.setText("   📂  请上传密码安全OEM IN产品报表（可选）\n       点击选择 Excel 文件")
+        self.upload_btn_pwd_oem.setStyleSheet(self.upload_card_style)
         self.input_zonghe.clear()
         self.input_shuju.clear()
         self.input_chanjiao.clear()
@@ -1358,6 +1406,15 @@ class OrderModule(BaseModule):
         if file_path:
             self.last_dir = os.path.dirname(file_path)
             self.load_oem_file(file_path)
+
+    def select_pwd_oem_file(self):
+        file_path, _ = QFileDialog.getOpenFileName(
+            self, "选择密码安全OEM IN产品报表", self.last_dir,
+            "Excel文件 (*.xlsx *.xls)", options=QFileDialog.DontUseNativeDialog
+        )
+        if file_path:
+            self.last_dir = os.path.dirname(file_path)
+            self.load_pwd_oem_file(file_path)
 
     def select_manual_file(self):
         file_path, _ = QFileDialog.getOpenFileName(
@@ -1413,6 +1470,18 @@ class OrderModule(BaseModule):
             fname = os.path.basename(file_path)
             self.upload_btn_3.setText(f"   ✅  数据安全OEM IN产品报表已加载：{fname}\n       点击可重新选择")
             self.upload_btn_3.setStyleSheet(self.upload_card_ok_style)
+            self.download_btn.setEnabled(False)
+            self.current_report_path = None
+        except Exception as e:
+            QMessageBox.critical(self, "读取失败", str(e))
+
+    def load_pwd_oem_file(self, file_path):
+        try:
+            df = self._read_extra_file(file_path, "密码安全OEM IN产品报表")
+            self.current_df_pwd_oem = df
+            fname = os.path.basename(file_path)
+            self.upload_btn_pwd_oem.setText(f"   ✅  密码安全OEM IN产品报表已加载：{fname}\n       点击可重新选择")
+            self.upload_btn_pwd_oem.setStyleSheet(self.upload_card_ok_style)
             self.download_btn.setEnabled(False)
             self.current_report_path = None
         except Exception as e:
@@ -1509,9 +1578,10 @@ class OrderModule(BaseModule):
                                           week_start=week_start, week_end=week_end,
                                           df_mgmt=self.current_df_mgmt,
                                           df_oem=self.current_df_oem,
+                                          df_pwd_oem=self.current_df_pwd_oem,
                                           df_manual=self.current_df_manual,
                                           year25_data=self.year25_data)
-                
+
                 if self.current_df_maoli is not None:
                     maoli_manual = None
                     if self.current_df_maoli_manual is not None:
@@ -1519,6 +1589,7 @@ class OrderModule(BaseModule):
                     result2 = process_maoli_order(self.current_df_maoli,
                                                   week_start=week_start, week_end=week_end,
                                                   df_mgmt=None, df_oem=None,
+                                                  df_pwd_oem=self.current_df_pwd_oem,
                                                   df_manual=maoli_manual)
                     result.update(result2)
                 

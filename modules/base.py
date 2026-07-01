@@ -26,15 +26,12 @@ def apply_excel_style(workbook):
                 cell.font = Font(bold=True)
                 cell.alignment = Alignment(horizontal='center', vertical='center')
                 cell.border = thin_border
-        
-        # 2. 数据区域边框和对齐
+
+        # 2. 数据区域边框和对齐 - 所有单元格居中
         for row in ws.iter_rows(min_row=2, max_row=ws.max_row, min_col=1, max_col=ws.max_column):
             for cell in row:
                 cell.border = thin_border
-                if isinstance(cell.value, (int, float)):
-                    cell.alignment = Alignment(horizontal='right', vertical='center')
-                else:
-                    cell.alignment = Alignment(horizontal='left', vertical='center')
+                cell.alignment = Alignment(horizontal='center', vertical='center')
         
         # 3. 针对 PDT产品线 合并二级分类列（第一列）+ 订单目标(21) + 完成率(22)
         if sheet_name in ('PDT产品线', '毛利_PDT产品线') and ws.max_row > 1:
@@ -100,39 +97,52 @@ def apply_excel_style(workbook):
                     current_val = val
 
         # 6. PDT产品线：合并W列（25年合计）和X列（25年同比）
-        # 根据用户要求：W2-W8综合服务，W9-W13数据安全，W14-W16产教融合，W17总计
+        # 新结构：综合服务(行2-9含小计)、数据安全(行10-14)、产教融合(行15-17)、总计(行18)、安全集成服务(行19)、密码安全(行20-22)
         if sheet_name == 'PDT产品线' and ws.max_row > 1:
-            if ws.max_row >= 8:
-                ws.merge_cells(start_row=2, start_column=23, end_row=8, end_column=23)
-                ws.merge_cells(start_row=2, start_column=24, end_row=8, end_column=24)
-                for r in range(2, 9):
+            if ws.max_row >= 9:
+                ws.merge_cells(start_row=2, start_column=23, end_row=9, end_column=23)
+                ws.merge_cells(start_row=2, start_column=24, end_row=9, end_column=24)
+                for r in range(2, 10):
                     ws.cell(row=r, column=23).alignment = Alignment(horizontal='center', vertical='center')
                     ws.cell(row=r, column=24).alignment = Alignment(horizontal='center', vertical='center')
-            if ws.max_row >= 13:
-                ws.merge_cells(start_row=9, start_column=23, end_row=13, end_column=23)
-                ws.merge_cells(start_row=9, start_column=24, end_row=13, end_column=24)
-                for r in range(9, 14):
-                    ws.cell(row=r, column=23).alignment = Alignment(horizontal='center', vertical='center')
-                    ws.cell(row=r, column=24).alignment = Alignment(horizontal='center', vertical='center')
-            if ws.max_row >= 16:
-                ws.merge_cells(start_row=14, start_column=23, end_row=16, end_column=23)
-                ws.merge_cells(start_row=14, start_column=24, end_row=16, end_column=24)
-                for r in range(14, 17):
+            if ws.max_row >= 14:
+                ws.merge_cells(start_row=10, start_column=23, end_row=14, end_column=23)
+                ws.merge_cells(start_row=10, start_column=24, end_row=14, end_column=24)
+                for r in range(10, 15):
                     ws.cell(row=r, column=23).alignment = Alignment(horizontal='center', vertical='center')
                     ws.cell(row=r, column=24).alignment = Alignment(horizontal='center', vertical='center')
             if ws.max_row >= 17:
-                for r in range(17, 18):
+                ws.merge_cells(start_row=15, start_column=23, end_row=17, end_column=23)
+                ws.merge_cells(start_row=15, start_column=24, end_row=17, end_column=24)
+                for r in range(15, 18):
+                    ws.cell(row=r, column=23).alignment = Alignment(horizontal='center', vertical='center')
+                    ws.cell(row=r, column=24).alignment = Alignment(horizontal='center', vertical='center')
+            if ws.max_row >= 18:
+                for r in range(18, 19):
                     ws.cell(row=r, column=23).alignment = Alignment(horizontal='center', vertical='center')
                     ws.cell(row=r, column=24).alignment = Alignment(horizontal='center', vertical='center')
 
-        # 7. 自动列宽（限制最大宽度30）
+        # 7. 自动列宽（不限制最大宽度，让所有字眼都显示完整）
         for col in ws.columns:
             max_len = 0
             col_letter = get_column_letter(col[0].column)
             for cell in col:
-                if cell.value:
-                    max_len = max(max_len, len(str(cell.value)))
-            ws.column_dimensions[col_letter].width = min(max_len + 2, 30)
+                if cell.value is not None:
+                    cell_str = str(cell.value)
+                    length = 0
+                    for ch in cell_str:
+                        if ord(ch) > 127:
+                            length += 2
+                        else:
+                            length += 1
+                    max_len = max(max_len, length)
+            ws.column_dimensions[col_letter].width = max_len + 3
+
+        # 8. 所有运算完成后，将所有为0的单元格替换为"-"（仅数据区，不替换标题行）
+        for row in ws.iter_rows(min_row=2, max_row=ws.max_row, min_col=1, max_col=ws.max_column):
+            for cell in row:
+                if cell.value == 0 or cell.value == 0.0:
+                    cell.value = '-'
 
 
 # ========== 通用报表生成线程 ==========
